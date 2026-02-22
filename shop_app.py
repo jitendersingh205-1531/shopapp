@@ -10,6 +10,7 @@ st.set_page_config("Shop Manager", layout="centered")
 conn = sqlite3.connect("shop.db", check_same_thread=False)
 c = conn.cursor()
 
+# Tables
 c.execute("""
 CREATE TABLE IF NOT EXISTS stock(
     id INTEGER PRIMARY KEY,
@@ -41,9 +42,13 @@ if "page" not in st.session_state:
 if "detail_view" not in st.session_state:
     st.session_state.detail_view = None
 
+
 # ---------------- HEADER ----------------
-st.markdown("<h2 style='text-align:center'>🛒 Simple Shop Manager</h2>",
-            unsafe_allow_html=True)
+st.markdown(
+    "<h2 style='text-align:center'>🛒 Simple Shop Manager</h2>",
+    unsafe_allow_html=True
+)
+
 st.write("")
 
 # ---------------- TOP BUTTONS ----------------
@@ -53,24 +58,29 @@ with col1:
     if st.button("📦 Stock", use_container_width=True):
         st.session_state.page = "Stock"
         st.session_state.detail_view = None
+        st.rerun()
 
 with col2:
     if st.button("💰 Sales", use_container_width=True):
         st.session_state.page = "Sales"
         st.session_state.detail_view = None
+        st.rerun()
 
 with col3:
     if st.button("📊 Reports", use_container_width=True):
         st.session_state.page = "Reports"
         st.session_state.detail_view = None
+        st.rerun()
 
 st.divider()
+
 
 # ---------------- BACK BUTTON ----------------
 def back_button():
     if st.button("⬅ Back"):
         st.session_state.detail_view = None
-        st.experimental_rerun()
+        st.rerun()
+
 
 # ---------------- DASHBOARD ----------------
 def show_dashboard():
@@ -106,39 +116,48 @@ def show_dashboard():
     else:
         expiring_df = pd.DataFrame()
 
-    # DETAILS
+    # -------- DETAILS --------
+
     if st.session_state.detail_view == "profit":
+
         st.subheader("💰 Profit Details (Today)")
         back_button()
+
         if today_sales.empty:
             st.info("No sales today")
         else:
             st.dataframe(
                 today_sales[["item_name", "profit"]],
-                use_container_width=True
+                width="stretch"
             )
         return
 
     if st.session_state.detail_view == "low_stock":
+
         st.subheader("⚠ Low Stock Details")
         back_button()
+
         if low_stock_df.empty:
             st.info("No low stock items")
         else:
-            st.dataframe(low_stock_df, use_container_width=True)
+            st.dataframe(low_stock_df, width="stretch")
         return
 
     if st.session_state.detail_view == "expiring":
+
         st.subheader("⏰ Expiring Soon Details")
         back_button()
+
         if expiring_df.empty:
             st.info("No expiring items")
         else:
             st.dataframe(
                 expiring_df[["name", "qty", "expiry"]],
-                use_container_width=True
+                width="stretch"
             )
         return
+
+    # -------- MAIN DASHBOARD --------
 
     c1, c2, c3 = st.columns(3)
 
@@ -146,21 +165,22 @@ def show_dashboard():
         st.metric("💰 Profit Today (₹)", round(today_profit, 2))
         if st.button("Details", key="p"):
             st.session_state.detail_view = "profit"
-            st.experimental_rerun()
+            st.rerun()
 
     with c2:
         st.metric("⚠ Low Stock", len(low_stock_df))
         if st.button("Details", key="l"):
             st.session_state.detail_view = "low_stock"
-            st.experimental_rerun()
+            st.rerun()
 
     with c3:
         st.metric("⏰ Expiring Soon", len(expiring_df))
         if st.button("Details", key="e"):
             st.session_state.detail_view = "expiring"
-            st.experimental_rerun()
+            st.rerun()
 
     st.divider()
+
 
 # ---------------- STOCK PAGE ----------------
 def stock_page():
@@ -170,7 +190,10 @@ def stock_page():
     names_df = pd.read_sql("SELECT DISTINCT name FROM stock", conn)
     existing_names = names_df["name"].tolist()
 
-    search_name = st.text_input("🔍 Search Existing Item")
+    search_name = st.text_input(
+        "🔍 Search Existing Item",
+        key="stock_search"
+    )
 
     filtered = [
         n for n in existing_names
@@ -179,7 +202,11 @@ def stock_page():
 
     select_options = ["New Item"] + filtered
 
-    selected = st.selectbox("Select Item", select_options)
+    selected = st.selectbox(
+        "Select Item",
+        select_options,
+        key="stock_select"
+    )
 
     if selected == "New Item":
         name = st.text_input("Item Name")
@@ -204,7 +231,7 @@ def stock_page():
 
         conn.commit()
         st.success("Stock Added")
-        st.experimental_rerun()
+        st.rerun()
 
     st.subheader("📋 Current Stock (Total)")
 
@@ -219,7 +246,8 @@ def stock_page():
     if stock_df.empty:
         st.info("No stock available")
     else:
-        st.dataframe(stock_df, use_container_width=True)
+        st.dataframe(stock_df, width="stretch")
+
 
 # ---------------- SALES PAGE ----------------
 def sales_page():
@@ -239,7 +267,7 @@ def sales_page():
         st.info("No stock available")
         return
 
-    search = st.text_input("🔍 Search Item")
+    search = st.text_input("🔍 Search Item", key="sales_search")
 
     filtered = stock_df[
         stock_df["name"].str.lower().str.contains(search.lower())
@@ -249,9 +277,14 @@ def sales_page():
         st.warning("No matching item")
         return
 
-    item = st.selectbox("Select Item", filtered["name"].tolist())
+    item = st.selectbox(
+        "Select Item",
+        filtered["name"].tolist(),
+        key="sales_select"
+    )
 
     row = stock_df[stock_df["name"] == item].iloc[0]
+
     max_qty = int(row["total_qty"])
 
     if max_qty <= 0:
@@ -277,6 +310,7 @@ def sales_page():
         """, conn, params=(item,))
 
         for _, r in batches.iterrows():
+
             if remaining <= 0:
                 break
 
@@ -304,7 +338,8 @@ def sales_page():
         conn.commit()
 
         st.success("Sale Recorded")
-        st.experimental_rerun()
+        st.rerun()
+
 
 # ---------------- REPORTS PAGE ----------------
 def reports_page():
@@ -326,14 +361,15 @@ def reports_page():
     if sales_df.empty:
         st.info("No sales yet")
     else:
-        st.dataframe(sales_df, use_container_width=True)
+        st.dataframe(sales_df, width="stretch")
 
     st.write("### 📦 Stock Status")
 
     if stock_df.empty:
         st.info("No stock")
     else:
-        st.dataframe(stock_df, use_container_width=True)
+        st.dataframe(stock_df, width="stretch")
+
 
 # ---------------- MAIN ----------------
 show_dashboard()
