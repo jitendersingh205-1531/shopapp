@@ -235,16 +235,39 @@ def sales_page():
 
     item = st.selectbox("Select Item", stock_df["name"])
 
-    max_qty = stock_df[stock_df["name"] == item]["qty"].values[0]
+    # Get latest qty
+    latest_row = stock_df[stock_df["name"] == item].iloc[0]
+    max_qty = int(latest_row["qty"])
 
-    qty = st.number_input("Quantity Sold", 1, max_qty)
+    if max_qty <= 0:
+        st.error("Item out of stock")
+        return
+
+    qty = st.number_input(
+        "Quantity Sold",
+        min_value=1,
+        max_value=max_qty,
+        value=1
+    )
 
     if st.button("Confirm Sale"):
 
-        row = stock_df[stock_df["name"] == item].iloc[0]
+        # Re-check stock (important)
+        fresh_df = pd.read_sql(
+            "SELECT qty, buy_price, sell_price FROM stock WHERE name=?",
+            conn,
+            params=(item,)
+        )
 
-        sell_price = row["sell_price"]
-        buy_price = row["buy_price"]
+        current_qty = int(fresh_df.iloc[0]["qty"])
+
+        if qty > current_qty:
+            st.warning("Stock changed. Please try again.")
+            st.experimental_rerun()
+            return
+
+        buy_price = fresh_df.iloc[0]["buy_price"]
+        sell_price = fresh_df.iloc[0]["sell_price"]
 
         profit = (sell_price - buy_price) * qty
         today = datetime.today().date()
@@ -264,6 +287,9 @@ def sales_page():
         conn.commit()
 
         st.success("Sale Recorded")
+
+        # Refresh UI
+        st.experimental_rerun()
 
 
 # ---------------- REPORTS PAGE ----------------
@@ -300,3 +326,4 @@ elif st.session_state.page == "Sales":
 
 elif st.session_state.page == "Reports":
     reports_page()
+
