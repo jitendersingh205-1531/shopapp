@@ -10,7 +10,6 @@ st.set_page_config("Shop Manager", layout="centered")
 conn = sqlite3.connect("shop.db", check_same_thread=False)
 c = conn.cursor()
 
-# Tables
 c.execute("""
 CREATE TABLE IF NOT EXISTS stock(
     id INTEGER PRIMARY KEY,
@@ -29,7 +28,7 @@ CREATE TABLE IF NOT EXISTS sales(
     qty INTEGER,
     sell_price REAL,
     profit REAL,
-    date DATE
+    date TEXT
 )
 """)
 
@@ -42,11 +41,9 @@ if "page" not in st.session_state:
 if "detail_view" not in st.session_state:
     st.session_state.detail_view = None
 
-
 # ---------------- HEADER ----------------
 st.markdown("<h2 style='text-align:center'>🛒 Simple Shop Manager</h2>",
             unsafe_allow_html=True)
-
 st.write("")
 
 # ---------------- TOP BUTTONS ----------------
@@ -69,13 +66,11 @@ with col3:
 
 st.divider()
 
-
 # ---------------- BACK BUTTON ----------------
 def back_button():
     if st.button("⬅ Back"):
         st.session_state.detail_view = None
         st.experimental_rerun()
-
 
 # ---------------- DASHBOARD ----------------
 def show_dashboard():
@@ -85,23 +80,24 @@ def show_dashboard():
     stock_df = pd.read_sql("SELECT * FROM stock", conn)
     sales_df = pd.read_sql("SELECT * FROM sales", conn)
 
-    today = datetime.today().date()
+    today = datetime.today().strftime("%Y-%m-%d")
 
-    # -------- Calculations --------
-
+    # PROFIT
     if not sales_df.empty:
-        sales_df["date"] = pd.to_datetime(sales_df["date"])
-        today_sales = sales_df[sales_df["date"].dt.date == today]
+        today_sales = sales_df[sales_df["date"] == today]
         today_profit = today_sales["profit"].sum()
     else:
         today_sales = pd.DataFrame()
         today_profit = 0
 
+    # LOW STOCK
     if not stock_df.empty:
-        low_stock_df = stock_df[stock_df["qty"] <= 5]
+        grouped = stock_df.groupby("name")["qty"].sum().reset_index()
+        low_stock_df = grouped[grouped["qty"] <= 5]
     else:
         low_stock_df = pd.DataFrame()
 
+    # EXPIRY
     if not stock_df.empty:
         stock_df["expiry"] = pd.to_datetime(stock_df["expiry"])
         expiring_df = stock_df[
@@ -110,187 +106,205 @@ def show_dashboard():
     else:
         expiring_df = pd.DataFrame()
 
-    # -------- DETAILS SCREENS --------
-
-    # Profit Details
+    # DETAILS
     if st.session_state.detail_view == "profit":
-
         st.subheader("💰 Profit Details (Today)")
         back_button()
-
         if today_sales.empty:
             st.info("No sales today")
         else:
-            df = today_sales[["item_name", "profit"]]
-            df.columns = ["Item", "Profit (₹)"]
-            st.dataframe(df, use_container_width=True)
-
+            st.dataframe(
+                today_sales[["item_name", "profit"]],
+                use_container_width=True
+            )
         return
 
-    # Low Stock Details
     if st.session_state.detail_view == "low_stock":
-
         st.subheader("⚠ Low Stock Details")
         back_button()
-
         if low_stock_df.empty:
             st.info("No low stock items")
         else:
-            df = low_stock_df[["name", "qty"]]
-            df.columns = ["Item", "Quantity"]
-            st.dataframe(df, use_container_width=True)
-
+            st.dataframe(low_stock_df, use_container_width=True)
         return
 
-    # Expiry Details
     if st.session_state.detail_view == "expiring":
-
         st.subheader("⏰ Expiring Soon Details")
         back_button()
-
         if expiring_df.empty:
             st.info("No expiring items")
         else:
-            df = expiring_df[["name", "qty", "expiry"]]
-            df.columns = ["Item", "Qty", "Expiry"]
-            st.dataframe(df, use_container_width=True)
-
+            st.dataframe(
+                expiring_df[["name", "qty", "expiry"]],
+                use_container_width=True
+            )
         return
-
-    # -------- MAIN DASHBOARD --------
 
     c1, c2, c3 = st.columns(3)
 
     with c1:
         st.metric("💰 Profit Today (₹)", round(today_profit, 2))
-
         if st.button("Details", key="p"):
             st.session_state.detail_view = "profit"
             st.experimental_rerun()
 
     with c2:
         st.metric("⚠ Low Stock", len(low_stock_df))
-
         if st.button("Details", key="l"):
             st.session_state.detail_view = "low_stock"
             st.experimental_rerun()
 
     with c3:
         st.metric("⏰ Expiring Soon", len(expiring_df))
-
         if st.button("Details", key="e"):
             st.session_state.detail_view = "expiring"
             st.experimental_rerun()
 
     st.divider()
 
-
 # ---------------- STOCK PAGE ----------------
 def stock_page():
 
     st.subheader("📦 Stock Management")
 
-    with st.expander("➕ Add New Item"):
+    names_df = pd.read_sql("SELECT DISTINCT name FROM stock", conn)
+    existing_names = names_df["name"].tolist()
 
+    search_name = st.text_input("🔍 Search Existing Item")
+
+    filtered = [
+        n for n in existing_names
+        if search_name.lower() in n.lower()
+    ]
+
+    select_options = ["New Item"] + filtered
+
+    selected = st.selectbox("Select Item", select_options)
+
+    if selected == "New Item":
         name = st.text_input("Item Name")
-        qty = st.number_input("Quantity", min_value=1)
-        expiry = st.date_input("Expiry Date")
-        buy = st.number_input("Purchase Price", min_value=0.0)
-        sell = st.number_input("Selling Price", min_value=0.0)
+    else:
+        name = selected
 
-        if st.button("Save Stock"):
+    qty = st.number_input("Quantity", min_value=1)
+    expiry = st.date_input("Expiry Date")
+    buy = st.number_input("Purchase Price", min_value=0.0)
+    sell = st.number_input("Selling Price", min_value=0.0)
 
-            if name == "":
-                st.warning("Enter item name")
+    if st.button("Save Stock"):
 
-            else:
-                c.execute("""
-                INSERT INTO stock(name,qty,expiry,buy_price,sell_price)
-                VALUES(?,?,?,?,?)
-                """, (name, qty, expiry, buy, sell))
+        if name == "":
+            st.warning("Enter item name")
+            return
 
-                conn.commit()
-                st.success("Stock Added")
+        c.execute("""
+        INSERT INTO stock(name,qty,expiry,buy_price,sell_price)
+        VALUES(?,?,?,?,?)
+        """, (name, qty, expiry, buy, sell))
 
-    st.subheader("📋 Current Stock")
+        conn.commit()
+        st.success("Stock Added")
+        st.experimental_rerun()
 
-    df = pd.read_sql("SELECT * FROM stock", conn)
+    st.subheader("📋 Current Stock (Total)")
 
-    if df.empty:
+    stock_df = pd.read_sql("""
+        SELECT name,
+               SUM(qty) as qty,
+               MIN(expiry) as nearest_expiry
+        FROM stock
+        GROUP BY name
+    """, conn)
+
+    if stock_df.empty:
         st.info("No stock available")
     else:
-        st.dataframe(df, use_container_width=True)
-
+        st.dataframe(stock_df, use_container_width=True)
 
 # ---------------- SALES PAGE ----------------
 def sales_page():
 
     st.subheader("💰 Sales Entry")
 
-    stock_df = pd.read_sql("SELECT * FROM stock", conn)
+    stock_df = pd.read_sql("""
+        SELECT name,
+               SUM(qty) as total_qty,
+               AVG(buy_price) as buy_price,
+               AVG(sell_price) as sell_price
+        FROM stock
+        GROUP BY name
+    """, conn)
 
     if stock_df.empty:
         st.info("No stock available")
         return
 
-    item = st.selectbox("Select Item", stock_df["name"])
+    search = st.text_input("🔍 Search Item")
 
-    # Get latest qty
-    latest_row = stock_df[stock_df["name"] == item].iloc[0]
-    max_qty = int(latest_row["qty"])
+    filtered = stock_df[
+        stock_df["name"].str.lower().str.contains(search.lower())
+    ]
+
+    if filtered.empty:
+        st.warning("No matching item")
+        return
+
+    item = st.selectbox("Select Item", filtered["name"].tolist())
+
+    row = stock_df[stock_df["name"] == item].iloc[0]
+    max_qty = int(row["total_qty"])
 
     if max_qty <= 0:
-        st.error("Item out of stock")
+        st.error("Out of stock")
         return
 
     qty = st.number_input(
         "Quantity Sold",
         min_value=1,
         max_value=max_qty,
-        value=1
+        value=1,
+        step=1
     )
 
     if st.button("Confirm Sale"):
 
-        # Re-check stock (important)
-        fresh_df = pd.read_sql(
-            "SELECT qty, buy_price, sell_price FROM stock WHERE name=?",
-            conn,
-            params=(item,)
-        )
+        remaining = qty
 
-        current_qty = int(fresh_df.iloc[0]["qty"])
+        batches = pd.read_sql("""
+            SELECT id, qty FROM stock
+            WHERE name=?
+            ORDER BY expiry
+        """, conn, params=(item,))
 
-        if qty > current_qty:
-            st.warning("Stock changed. Please try again.")
-            st.experimental_rerun()
-            return
+        for _, r in batches.iterrows():
+            if remaining <= 0:
+                break
 
-        buy_price = fresh_df.iloc[0]["buy_price"]
-        sell_price = fresh_df.iloc[0]["sell_price"]
+            batch_qty = r["qty"]
+            batch_id = r["id"]
 
-        profit = (sell_price - buy_price) * qty
-        today = datetime.today().date()
+            if batch_qty <= remaining:
+                c.execute("DELETE FROM stock WHERE id=?", (batch_id,))
+                remaining -= batch_qty
+            else:
+                c.execute(
+                    "UPDATE stock SET qty = qty - ? WHERE id=?",
+                    (remaining, batch_id)
+                )
+                remaining = 0
 
-        # Save sale
+        profit = (row["sell_price"] - row["buy_price"]) * qty
+        today = datetime.today().strftime("%Y-%m-%d")
+
         c.execute("""
         INSERT INTO sales(item_name,qty,sell_price,profit,date)
         VALUES(?,?,?,?,?)
-        """, (item, qty, sell_price, profit, today))
-
-        # Update stock
-        c.execute("""
-        UPDATE stock SET qty = qty - ?
-        WHERE name = ?
-        """, (qty, item))
+        """, (item, qty, row["sell_price"], profit, today))
 
         conn.commit()
 
         st.success("Sale Recorded")
-
-        # Refresh UI
         st.experimental_rerun()
-
 
 # ---------------- REPORTS PAGE ----------------
 def reports_page():
@@ -298,7 +312,14 @@ def reports_page():
     st.subheader("📊 Reports")
 
     sales_df = pd.read_sql("SELECT * FROM sales", conn)
-    stock_df = pd.read_sql("SELECT * FROM stock", conn)
+
+    stock_df = pd.read_sql("""
+        SELECT name,
+               SUM(qty) as qty,
+               MIN(expiry) as expiry
+        FROM stock
+        GROUP BY name
+    """, conn)
 
     st.write("### 💰 Sales History")
 
@@ -314,7 +335,6 @@ def reports_page():
     else:
         st.dataframe(stock_df, use_container_width=True)
 
-
 # ---------------- MAIN ----------------
 show_dashboard()
 
@@ -326,4 +346,3 @@ elif st.session_state.page == "Sales":
 
 elif st.session_state.page == "Reports":
     reports_page()
-
