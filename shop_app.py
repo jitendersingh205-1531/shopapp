@@ -51,23 +51,23 @@ st.markdown("<h2 style='text-align:center'>🛒 Simple Shop Manager</h2>",
 st.write("")
 
 
-# ---------------- NAVIGATION ----------------
+# ---------------- NAV ----------------
 c1, c2, c3 = st.columns(3)
 
 with c1:
-    if st.button("📦 Stock", use_container_width=True):
+    if st.button("📦 Stock"):
         st.session_state.page = "Stock"
         st.session_state.detail_view = None
         st.rerun()
 
 with c2:
-    if st.button("💰 Sales", use_container_width=True):
+    if st.button("💰 Sales"):
         st.session_state.page = "Sales"
         st.session_state.detail_view = None
         st.rerun()
 
 with c3:
-    if st.button("📊 Reports", use_container_width=True):
+    if st.button("📊 Reports"):
         st.session_state.page = "Reports"
         st.session_state.detail_view = None
         st.rerun()
@@ -120,6 +120,7 @@ def show_dashboard():
     if st.session_state.detail_view == "profit":
         st.subheader("💰 Profit Details")
         back_button()
+
         if today_sales.empty:
             st.info("No sales today")
         else:
@@ -129,6 +130,7 @@ def show_dashboard():
     if st.session_state.detail_view == "low":
         st.subheader("⚠ Low Stock")
         back_button()
+
         if low_stock.empty:
             st.info("No low stock")
         else:
@@ -138,13 +140,13 @@ def show_dashboard():
     if st.session_state.detail_view == "exp":
         st.subheader("⏰ Expiring Soon")
         back_button()
+
         if expiring.empty:
-            st.info("No expiring items")
+            st.info("No expiring")
         else:
             st.dataframe(expiring[["name", "qty", "expiry"]], width="stretch")
         return
 
-    # MAIN
     d1, d2, d3 = st.columns(3)
 
     with d1:
@@ -171,45 +173,52 @@ def stock_page():
 
     st.subheader("📦 Stock Management")
 
-    names_df = pd.read_sql("SELECT DISTINCT name FROM stock", conn)
-    names = names_df["name"].tolist()
+    stock_names = pd.read_sql(
+        "SELECT DISTINCT name FROM stock",
+        conn
+    )["name"].tolist()
 
-    search = st.text_input("🔍 Search Item", key="stock_search")
+    # LIVE SEARCH
+    search = st.text_input("🔍 Search Item")
 
-    filtered = [n for n in names if search.lower() in n.lower()]
-
-    options = ["New Item"] + filtered
-
-    item = st.selectbox("Select Item", options, key="stock_select")
-
-    if item == "New Item":
-        name = st.text_input("Item Name")
+    if search:
+        names = [n for n in stock_names if search.lower() in n.lower()]
     else:
-        name = item
+        names = stock_names
 
-    qty = st.number_input("Quantity", min_value=1)
-    expiry = st.date_input("Expiry Date")
-    buy = st.number_input("Buy Price", min_value=0.0)
-    sell = st.number_input("Sell Price", min_value=0.0)
+    options = ["New Item"] + names
 
-    if st.button("Save Stock"):
+    with st.container():
 
-        if name == "":
-            st.warning("Enter item name")
-            return
+        selected = st.selectbox("Select Item", options)
 
-        c.execute("""
-        INSERT INTO stock(name,qty,expiry,buy_price,sell_price)
-        VALUES(?,?,?,?,?)
-        """, (name, qty, expiry, buy, sell))
+        if selected == "New Item":
+            name = st.text_input("Item Name")
+        else:
+            name = selected
 
-        conn.commit()
+        qty = st.number_input("Quantity", min_value=1)
+        expiry = st.date_input("Expiry Date")
+        buy = st.number_input("Buy Price", min_value=0.0)
+        sell = st.number_input("Sell Price", min_value=0.0)
 
-        st.success("Stock Added")
-        st.rerun()
+        if st.button("Save Stock"):
 
-    st.subheader("📋 Current Stock")
+            if name == "":
+                st.warning("Enter name")
+                return
 
+            c.execute("""
+            INSERT INTO stock(name,qty,expiry,buy_price,sell_price)
+            VALUES(?,?,?,?,?)
+            """, (name, qty, expiry, buy, sell))
+
+            conn.commit()
+
+            st.success("Stock Added")
+            st.rerun()
+
+    # DISPLAY
     df = pd.read_sql("""
         SELECT name,
                SUM(qty) as qty,
@@ -217,6 +226,8 @@ def stock_page():
         FROM stock
         GROUP BY name
     """, conn)
+
+    st.subheader("📋 Current Stock")
 
     if df.empty:
         st.info("No stock")
@@ -231,7 +242,7 @@ def sales_page():
 
     stock_df = pd.read_sql("""
         SELECT name,
-               SUM(qty) as total_qty,
+               SUM(qty) as qty,
                AVG(buy_price) as buy,
                AVG(sell_price) as sell
         FROM stock
@@ -242,75 +253,79 @@ def sales_page():
         st.info("No stock")
         return
 
-    search = st.text_input("🔍 Search Item", key="sales_search")
+    # LIVE SEARCH
+    search = st.text_input("🔍 Search Item")
 
-    filtered = stock_df[
-        stock_df["name"].str.lower().str.contains(search.lower())
-    ]
+    if search:
+        filtered = stock_df[
+            stock_df["name"].str.lower().str.contains(search.lower())
+        ]
+    else:
+        filtered = stock_df
 
     if filtered.empty:
         st.warning("No match")
         return
 
-    item = st.selectbox(
-        "Select Item",
-        filtered["name"].tolist(),
-        key="sales_select"
-    )
+    with st.container():
 
-    row = stock_df[stock_df["name"] == item].iloc[0]
+        item = st.selectbox(
+            "Select Item",
+            filtered["name"].tolist()
+        )
 
-    max_qty = int(row["total_qty"])
+        row = stock_df[stock_df["name"] == item].iloc[0]
 
-    qty = st.number_input(
-        "Quantity",
-        1,
-        max_qty,
-        1,
-        1
-    )
+        max_qty = int(row["qty"])
 
-    if st.button("Confirm Sale"):
+        qty = st.number_input(
+            "Quantity",
+            1,
+            max_qty,
+            1,
+            1
+        )
 
-        remaining = qty
+        if st.button("Confirm Sale"):
 
-        # Reduce FIFO batches
-        batches = pd.read_sql("""
-            SELECT id, qty FROM stock
-            WHERE name=?
-            ORDER BY expiry
-        """, conn, params=(item,))
+            remaining = qty
 
-        for _, r in batches.iterrows():
+            batches = pd.read_sql("""
+                SELECT id, qty FROM stock
+                WHERE name=?
+                ORDER BY expiry
+            """, conn, params=(item,))
 
-            if remaining <= 0:
-                break
+            for _, r in batches.iterrows():
 
-            bid = r["id"]
-            bqty = r["qty"]
+                if remaining <= 0:
+                    break
 
-            if bqty <= remaining:
-                c.execute("DELETE FROM stock WHERE id=?", (bid,))
-                remaining -= bqty
-            else:
-                c.execute("""
-                UPDATE stock SET qty=qty-?
-                WHERE id=?
-                """, (remaining, bid))
-                remaining = 0
+                bid = r["id"]
+                bqty = r["qty"]
 
-        profit = (row["sell"] - row["buy"]) * qty
-        today = datetime.today().strftime("%Y-%m-%d")
+                if bqty <= remaining:
+                    c.execute("DELETE FROM stock WHERE id=?", (bid,))
+                    remaining -= bqty
+                else:
+                    c.execute("""
+                    UPDATE stock SET qty=qty-?
+                    WHERE id=?
+                    """, (remaining, bid))
+                    remaining = 0
 
-        c.execute("""
-        INSERT INTO sales(item_name,qty,sell_price,profit,date)
-        VALUES(?,?,?,?,?)
-        """, (item, qty, row["sell"], profit, today))
+            profit = (row["sell"] - row["buy"]) * qty
+            today = datetime.today().strftime("%Y-%m-%d")
 
-        conn.commit()
+            c.execute("""
+            INSERT INTO sales(item_name,qty,sell_price,profit,date)
+            VALUES(?,?,?,?,?)
+            """, (item, qty, row["sell"], profit, today))
 
-        st.success("Sale Recorded")
-        st.rerun()
+            conn.commit()
+
+            st.success("Sale Recorded")
+            st.rerun()
 
 
 # ---------------- REPORTS ----------------
@@ -328,7 +343,7 @@ def reports_page():
         GROUP BY name
     """, conn)
 
-    st.write("### 💰 Sales History")
+    st.write("### 💰 Sales")
 
     if sales_df.empty:
         st.info("No sales")
