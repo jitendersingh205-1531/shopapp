@@ -267,6 +267,19 @@ st.divider()
 st.subheader("🛠 Debug")
 st.write("Database Path:", DB_PATH)
 
+st.divider()
+st.subheader("🛠 Debug Tools")
+
+# Show DB path (important for troubleshooting)
+st.write("Database Path:", DB_PATH)
+
+# Download database
+with open(DB_PATH, "rb") as f:
+    st.download_button(
+        "📥 Download Database",
+        f,
+        file_name="shop.db"
+    )
 # ---------------- RESET ----------------
 st.divider()
 if st.button("🔴 Reset All Data"):
