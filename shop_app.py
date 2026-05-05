@@ -374,5 +374,13 @@ st.subheader("🛠 Debug Tools")
 
 with open("shop.db", "rb") as f:
     st.download_button("📥 Download Database", f, file_name="shop.db")
+st.divider()
+st.subheader("⚠ Reset Database")
 
+if st.button("🔴 Reset All Data"):
+    c.execute("DELETE FROM stock")
+    c.execute("DELETE FROM sales")
+    conn.commit()
+    st.success("All data cleared!")
+    st.rerun()
 
