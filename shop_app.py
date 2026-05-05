@@ -2,12 +2,20 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta
+import os
 
 # ---------------- CONFIG ----------------
 st.set_page_config("Shop Manager", layout="centered")
 
-# ---------------- DATABASE ----------------
-conn = sqlite3.connect("shop.db", check_same_thread=False)
+# ---------------- DATABASE (ABSOLUTE PATH) ----------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "shop.db")
+
+@st.cache_resource
+def get_conn(db_path):
+    return sqlite3.connect(db_path, check_same_thread=False)
+
+conn = get_conn(DB_PATH)
 c = conn.cursor()
 
 # Tables
@@ -32,24 +40,16 @@ CREATE TABLE IF NOT EXISTS sales(
     date TEXT
 )
 """)
-
 conn.commit()
-
 
 # ---------------- SESSION ----------------
 if "page" not in st.session_state:
     st.session_state.page = "Dashboard"
 
-if "detail_view" not in st.session_state:
-    st.session_state.detail_view = None
-
-
 # ---------------- HEADER ----------------
 st.markdown("<h2 style='text-align:center'>🛒 Simple Shop Manager</h2>",
             unsafe_allow_html=True)
-
 st.write("")
-
 
 # ---------------- NAV ----------------
 c1, c2, c3 = st.columns(3)
@@ -57,37 +57,24 @@ c1, c2, c3 = st.columns(3)
 with c1:
     if st.button("📦 Stock"):
         st.session_state.page = "Stock"
-        st.session_state.detail_view = None
         st.rerun()
 
 with c2:
     if st.button("💰 Sales"):
         st.session_state.page = "Sales"
-        st.session_state.detail_view = None
         st.rerun()
 
 with c3:
     if st.button("📊 Reports"):
         st.session_state.page = "Reports"
-        st.session_state.detail_view = None
         st.rerun()
 
 st.divider()
-
-
-# ---------------- BACK ----------------
-def back_button():
-    if st.button("⬅ Back"):
-        st.session_state.detail_view = None
-        st.rerun()
-
 
 # ---------------- DASHBOARD ----------------
 def show_dashboard():
 
     today = datetime.today().strftime("%Y-%m-%d")
-
-    st.subheader("📈 Today Overview")
 
     sales_df = pd.read_sql("SELECT * FROM sales", conn)
 
@@ -95,7 +82,6 @@ def show_dashboard():
         today_sales = sales_df[sales_df["date"] == today]
         profit = today_sales["profit"].sum()
     else:
-        today_sales = pd.DataFrame()
         profit = 0
 
     grouped = pd.read_sql("""
@@ -118,14 +104,9 @@ def show_dashboard():
 
     d1, d2, d3 = st.columns(3)
 
-    with d1:
-        st.metric("💰 Today Profit", round(profit, 2))
-
-    with d2:
-        st.metric("⚠ Low Stock", len(low_stock))
-
-    with d3:
-        st.metric("⏰ Expiring", len(expiring))
+    d1.metric("💰 Today Profit", round(profit, 2))
+    d2.metric("⚠ Low Stock", len(low_stock))
+    d3.metric("⏰ Expiring", len(expiring))
 
 
 # ---------------- STOCK PAGE ----------------
@@ -135,14 +116,7 @@ def stock_page():
 
     names = pd.read_sql("SELECT DISTINCT name FROM stock", conn)["name"].tolist()
 
-    search = st.text_input("🔍 Search Item")
-
-    if search:
-        names = [n for n in names if search.lower() in n.lower()]
-
-    options = ["New Item"] + names
-
-    selected = st.selectbox("Select Item", options)
+    selected = st.selectbox("Select Item", ["New Item"] + names)
 
     name = st.text_input("Item Name") if selected == "New Item" else selected
 
@@ -152,8 +126,7 @@ def stock_page():
     sell = st.number_input("Sell Price", min_value=0.0)
 
     if st.button("Save Stock"):
-
-        if name == "":
+        if not name:
             st.warning("Enter name")
             return
 
@@ -173,11 +146,7 @@ def stock_page():
     """, conn)
 
     st.subheader("📋 Current Stock")
-
-    if df.empty:
-        st.info("No stock")
-    else:
-        st.dataframe(df, width="stretch")
+    st.dataframe(df, use_container_width=True)
 
 
 # ---------------- SALES PAGE ----------------
@@ -198,29 +167,16 @@ def sales_page():
         st.info("No stock")
         return
 
-    search = st.text_input("🔍 Search Item")
-
-    if search:
-        stock_df = stock_df[
-            stock_df["name"].str.lower().str.contains(search.lower())
-        ]
-
-    if stock_df.empty:
-        st.warning("No match")
-        return
-
     item = st.selectbox("Select Item", stock_df["name"].tolist())
-
     row = stock_df[stock_df["name"] == item].iloc[0]
 
     max_qty = int(row["qty"])
-
     qty = st.number_input("Quantity", 1, max_qty, 1)
 
     if st.button("Confirm Sale"):
 
         if qty > max_qty:
-            st.error("Not enough stock available")
+            st.error("Not enough stock")
             return
 
         try:
@@ -239,7 +195,7 @@ def sales_page():
                 if remaining <= 0:
                     break
 
-                batch_id = r["id"]
+                batch_id = int(r["id"])
                 batch_qty = int(r["qty"])
 
                 if batch_qty <= remaining:
@@ -247,8 +203,7 @@ def sales_page():
                     remaining -= batch_qty
                 else:
                     c.execute("""
-                        UPDATE stock 
-                        SET qty = qty - ?
+                        UPDATE stock SET qty = qty - ?
                         WHERE id = ?
                     """, (remaining, batch_id))
                     remaining = 0
@@ -282,7 +237,6 @@ def reports_page():
     st.subheader("📊 Reports")
 
     sales_df = pd.read_sql("SELECT * FROM sales", conn)
-
     stock_df = pd.read_sql("""
         SELECT name, COALESCE(SUM(qty),0) as qty, MIN(expiry) as expiry
         FROM stock
@@ -290,10 +244,10 @@ def reports_page():
     """, conn)
 
     st.write("### 💰 Sales")
-    st.dataframe(sales_df if not sales_df.empty else pd.DataFrame())
+    st.dataframe(sales_df, use_container_width=True)
 
     st.write("### 📦 Stock")
-    st.dataframe(stock_df if not stock_df.empty else pd.DataFrame())
+    st.dataframe(stock_df, use_container_width=True)
 
 
 # ---------------- MAIN ----------------
@@ -308,22 +262,16 @@ elif st.session_state.page == "Sales":
 elif st.session_state.page == "Reports":
     reports_page()
 
-
 # ---------------- DEBUG ----------------
 st.divider()
-st.subheader("🛠 Debug Tools")
-
-with open("shop.db", "rb") as f:
-    st.download_button("📥 Download Database", f, file_name="shop.db")
-
+st.subheader("🛠 Debug")
+st.write("Database Path:", DB_PATH)
 
 # ---------------- RESET ----------------
 st.divider()
-st.subheader("⚠ Reset Database")
-
 if st.button("🔴 Reset All Data"):
     c.execute("DELETE FROM stock")
     c.execute("DELETE FROM sales")
     conn.commit()
-    st.success("All data cleared!")
+    st.success("All data cleared")
     st.rerun()
