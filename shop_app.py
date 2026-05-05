@@ -89,7 +89,6 @@ def show_dashboard():
 
     st.subheader("📈 Today Overview")
 
-    # -------- PROFIT --------
     sales_df = pd.read_sql("SELECT * FROM sales", conn)
 
     if not sales_df.empty:
@@ -99,20 +98,15 @@ def show_dashboard():
         today_sales = pd.DataFrame()
         profit = 0
 
-    # -------- LOW STOCK (fresh query) --------
     grouped = pd.read_sql("""
-        SELECT name, SUM(qty) as qty
+        SELECT name, COALESCE(SUM(qty),0) as qty
         FROM stock
         GROUP BY name
     """, conn)
 
     low_stock = grouped[grouped["qty"] <= 5]
 
-    # -------- EXPIRY (fresh query) --------
-    expiry_df = pd.read_sql("""
-        SELECT name, qty, expiry
-        FROM stock
-    """, conn)
+    expiry_df = pd.read_sql("SELECT name, qty, expiry FROM stock", conn)
 
     if not expiry_df.empty:
         expiry_df["expiry"] = pd.to_datetime(expiry_df["expiry"])
@@ -122,79 +116,16 @@ def show_dashboard():
     else:
         expiring = pd.DataFrame()
 
-    # ---------------- DETAILS ----------------
-
-    if st.session_state.detail_view == "profit":
-        st.subheader("💰 Profit Details")
-        back_button()
-
-        if today_sales.empty:
-            st.info("No sales today")
-        else:
-            st.dataframe(today_sales[["item_name", "profit"]], width="stretch")
-        return
-
-    if st.session_state.detail_view == "low":
-        st.subheader("⚠ Low Stock Details")
-        back_button()
-
-        fresh = pd.read_sql("""
-            SELECT name, SUM(qty) as qty
-            FROM stock
-            GROUP BY name
-        """, conn)
-
-        low_stock = fresh[fresh["qty"] <= 5]
-
-        if low_stock.empty:
-            st.info("No low stock")
-        else:
-            st.dataframe(low_stock, width="stretch")
-        return
-
-    if st.session_state.detail_view == "exp":
-        st.subheader("⏰ Expiring Soon")
-        back_button()
-
-        fresh = pd.read_sql("""
-            SELECT name, qty, expiry
-            FROM stock
-        """, conn)
-
-        if not fresh.empty:
-            fresh["expiry"] = pd.to_datetime(fresh["expiry"])
-            expiring = fresh[
-                fresh["expiry"] <= (datetime.today() + timedelta(days=7))
-            ]
-        else:
-            expiring = pd.DataFrame()
-
-        if expiring.empty:
-            st.info("No expiring")
-        else:
-            st.dataframe(expiring, width="stretch")
-        return
-
-    # ---------------- MAIN CARDS ----------------
     d1, d2, d3 = st.columns(3)
 
     with d1:
         st.metric("💰 Today Profit", round(profit, 2))
-        if st.button("Details", key="dp"):
-            st.session_state.detail_view = "profit"
-            st.rerun()
 
     with d2:
         st.metric("⚠ Low Stock", len(low_stock))
-        if st.button("Details", key="dl"):
-            st.session_state.detail_view = "low"
-            st.rerun()
 
     with d3:
         st.metric("⏰ Expiring", len(expiring))
-        if st.button("Details", key="de"):
-            st.session_state.detail_view = "exp"
-            st.rerun()
 
 
 # ---------------- STOCK PAGE ----------------
@@ -213,10 +144,7 @@ def stock_page():
 
     selected = st.selectbox("Select Item", options)
 
-    if selected == "New Item":
-        name = st.text_input("Item Name")
-    else:
-        name = selected
+    name = st.text_input("Item Name") if selected == "New Item" else selected
 
     qty = st.number_input("Quantity", min_value=1)
     expiry = st.date_input("Expiry Date")
@@ -235,12 +163,11 @@ def stock_page():
         """, (name, qty, expiry, buy, sell))
 
         conn.commit()
-
         st.success("Stock Added")
         st.rerun()
 
     df = pd.read_sql("""
-        SELECT name, SUM(qty) as qty, MIN(expiry) as expiry
+        SELECT name, COALESCE(SUM(qty),0) as qty, MIN(expiry) as expiry
         FROM stock
         GROUP BY name
     """, conn)
@@ -288,45 +215,65 @@ def sales_page():
 
     max_qty = int(row["qty"])
 
-    qty = st.number_input("Quantity", 1, max_qty, 1, 1)
+    qty = st.number_input("Quantity", 1, max_qty, 1)
 
     if st.button("Confirm Sale"):
 
-        remaining = qty
+        if qty > max_qty:
+            st.error("Not enough stock available")
+            return
 
-        batches = pd.read_sql("""
-            SELECT id, qty FROM stock
-            WHERE name=?
-            ORDER BY expiry
-        """, conn, params=(item,))
+        try:
+            conn.execute("BEGIN")
 
-        for _, r in batches.iterrows():
+            remaining = qty
 
-            if remaining <= 0:
-                break
+            batches = pd.read_sql("""
+                SELECT id, qty FROM stock
+                WHERE name=?
+                ORDER BY expiry ASC, id ASC
+            """, conn, params=(item,))
 
-            if r["qty"] <= remaining:
-                c.execute("DELETE FROM stock WHERE id=?", (r["id"],))
-                remaining -= r["qty"]
-            else:
-                c.execute("""
-                UPDATE stock SET qty=qty-?
-                WHERE id=?
-                """, (remaining, r["id"]))
-                remaining = 0
+            for _, r in batches.iterrows():
 
-        profit = (row["sell"] - row["buy"]) * qty
-        today = datetime.today().strftime("%Y-%m-%d")
+                if remaining <= 0:
+                    break
 
-        c.execute("""
-        INSERT INTO sales(item_name,qty,sell_price,profit,date)
-        VALUES(?,?,?,?,?)
-        """, (item, qty, row["sell"], profit, today))
+                batch_id = r["id"]
+                batch_qty = int(r["qty"])
 
-        conn.commit()
+                if batch_qty <= remaining:
+                    c.execute("DELETE FROM stock WHERE id=?", (batch_id,))
+                    remaining -= batch_qty
+                else:
+                    c.execute("""
+                        UPDATE stock 
+                        SET qty = qty - ?
+                        WHERE id = ?
+                    """, (remaining, batch_id))
+                    remaining = 0
 
-        st.success("Sale Recorded")
-        st.rerun()
+            if remaining > 0:
+                conn.rollback()
+                st.error("Stock update failed")
+                return
+
+            profit = (row["sell"] - row["buy"]) * qty
+            today = datetime.today().strftime("%Y-%m-%d")
+
+            c.execute("""
+            INSERT INTO sales(item_name,qty,sell_price,profit,date)
+            VALUES(?,?,?,?,?)
+            """, (item, qty, row["sell"], profit, today))
+
+            conn.commit()
+
+            st.success("Sale Recorded & Stock Updated ✅")
+            st.rerun()
+
+        except Exception as e:
+            conn.rollback()
+            st.error(f"Error: {e}")
 
 
 # ---------------- REPORTS ----------------
@@ -337,24 +284,16 @@ def reports_page():
     sales_df = pd.read_sql("SELECT * FROM sales", conn)
 
     stock_df = pd.read_sql("""
-        SELECT name, SUM(qty) as qty, MIN(expiry) as expiry
+        SELECT name, COALESCE(SUM(qty),0) as qty, MIN(expiry) as expiry
         FROM stock
         GROUP BY name
     """, conn)
 
     st.write("### 💰 Sales")
-
-    if sales_df.empty:
-        st.info("No sales")
-    else:
-        st.dataframe(sales_df, width="stretch")
+    st.dataframe(sales_df if not sales_df.empty else pd.DataFrame())
 
     st.write("### 📦 Stock")
-
-    if stock_df.empty:
-        st.info("No stock")
-    else:
-        st.dataframe(stock_df, width="stretch")
+    st.dataframe(stock_df if not stock_df.empty else pd.DataFrame())
 
 
 # ---------------- MAIN ----------------
