@@ -366,12 +366,13 @@ if st.session_state.page == "Stock":
 
 elif st.session_state.page == "Sales":
     sales_page()
-
+elif st.session_state.page == "Reports":
+    reports_page()
+    
 st.divider()
 st.subheader("🛠 Debug Tools")
 
 with open("shop.db", "rb") as f:
     st.download_button("📥 Download Database", f, file_name="shop.db")
 
-elif st.session_state.page == "Reports":
-    reports_page()
+
